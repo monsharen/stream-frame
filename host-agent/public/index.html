@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Theater Remote</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <nav id="services"></nav>
+    <button id="refresh" title="Re-read the catalog from the service">Refresh</button>
+  </header>
+
+  <main id="catalog"><p class="hint">Pick a service.</p></main>
+
+  <footer id="now-playing" hidden>
+    <div class="np-title"><span id="np-title"></span> <span id="np-status" class="status"></span></div>
+    <input id="scrubber" type="range" min="0" max="0" step="1" value="0">
+    <div class="np-row">
+      <span id="np-time">0:00 / 0:00</span>
+      <div class="np-buttons">
+        <button data-action="seekBy" data-value="-10">−10s</button>
+        <button data-action="toggle" id="toggle">Pause</button>
+        <button data-action="seekBy" data-value="10">+10s</button>
+        <button data-action="stop">Stop</button>
+      </div>
+    </div>
+    <p id="np-error" class="error" hidden></p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
