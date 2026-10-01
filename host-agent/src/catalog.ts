@@ -1,30 +1,25 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { ChromeHost } from './chrome.ts';
+import { PageBusyError, type ChromeHost } from './chrome.ts';
 import { config } from './config.ts';
-import type { Player } from './player.ts';
 import type { CatalogRow, ServiceAdapter } from './services/types.ts';
 
 export type Catalog = { service: string; fetchedAt: string; rows: CatalogRow[] };
 
-export class PlayerBusyError extends Error {
-  constructor() {
-    super('Cannot refresh the catalog while something is playing; the cached catalog is still served.');
-  }
-}
-
 /**
  * Catalogs are scraped from the same Chrome tab that plays video, so they're
- * cached (in memory and on disk) and only refreshed while nothing is playing.
+ * cached (in memory and on disk) and a refresh needs the tab lease: it's
+ * refused while something plays, and playback is refused while it runs.
  */
 export class CatalogStore {
   #chrome: ChromeHost;
-  #player: Player;
   #cache = new Map<string, Catalog>();
+  // One scrape at a time (they share the tab). A concurrent refresh of the
+  // same service, e.g. from the headset and the phone, joins it.
+  #inflight: { serviceId: string; promise: Promise<Catalog> } | undefined;
 
-  constructor(chrome: ChromeHost, player: Player) {
+  constructor(chrome: ChromeHost) {
     this.#chrome = chrome;
-    this.#player = player;
   }
 
   async get(service: ServiceAdapter, refresh = false): Promise<Catalog> {
@@ -35,8 +30,20 @@ export class CatalogStore {
         return cached;
       }
     }
-    if (this.#player.busy) throw new PlayerBusyError();
+    if (this.#inflight) {
+      if (this.#inflight.serviceId === service.id) return this.#inflight.promise;
+      throw new PageBusyError('catalog');
+    }
+    this.#chrome.claim('catalog');
+    const promise = this.#scrape(service).finally(() => {
+      this.#inflight = undefined;
+      this.#chrome.release('catalog');
+    });
+    this.#inflight = { serviceId: service.id, promise };
+    return promise;
+  }
 
+  async #scrape(service: ServiceAdapter): Promise<Catalog> {
     const rows = await service.fetchCatalog(await this.#chrome.page());
     const catalog = { service: service.id, fetchedAt: new Date().toISOString(), rows };
     this.#cache.set(service.id, catalog);

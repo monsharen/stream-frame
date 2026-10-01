@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -13,13 +15,38 @@ function defaultChromePath(): string {
 }
 
 const env = process.env;
-const dataDir = env.DATA_DIR ?? path.join(os.homedir(), '.theater-agent');
+const dataDir = env.DATA_DIR ?? path.join(os.homedir(), '.stream-frame');
+
+/**
+ * The agent drives a logged-in browser, so it always requires a token: the
+ * AGENT_TOKEN env var, or one generated on first run and kept in the data dir.
+ */
+function loadToken(): string {
+  if (env.AGENT_TOKEN) return env.AGENT_TOKEN;
+  const file = path.join(dataDir, 'token');
+  try {
+    return fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    const token = crypto.randomBytes(18).toString('base64url');
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(file, token, { mode: 0o600 });
+    return token;
+  }
+}
 
 export const config = {
   host: env.HOST ?? '0.0.0.0',
   port: Number(env.PORT ?? 8787),
-  // When set, every API/WS request must carry it (Bearer header or ?token=).
-  token: env.AGENT_TOKEN || undefined,
+  // Every API/WS request must carry it (Bearer header or ?token=).
+  token: loadToken(),
+  // Host names (besides IP addresses, localhost and this machine's name) the
+  // agent may be addressed by. Anything else is refused to stop DNS rebinding.
+  allowedHosts: [
+    'localhost',
+    os.hostname().toLowerCase(),
+    `${os.hostname().toLowerCase()}.local`,
+    ...(env.ALLOWED_HOSTS ?? '').toLowerCase().split(',').map((h) => h.trim()).filter(Boolean),
+  ],
   dataDir,
   chrome: {
     path: env.CHROME_PATH ?? defaultChromePath(),

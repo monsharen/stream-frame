@@ -1,5 +1,5 @@
 {
-  "name": "theater-host-agent",
+  "name": "stream-frame-host-agent",
   "version": "0.1.0",
   "private": true,
   "description": "Runs on the streaming PC: drives a logged-in Chrome over CDP and exposes a control API for the headset.",
@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node src/main.ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "node --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "playwright-core": "^1.55.0",

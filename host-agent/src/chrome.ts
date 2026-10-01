@@ -35,16 +35,42 @@ function launchChrome(): void {
   child.unref();
 }
 
+export type PageOwner = 'playback' | 'catalog';
+
+export class PageBusyError extends Error {
+  constructor(holder: PageOwner) {
+    super(
+      holder === 'playback'
+        ? 'Something is playing; stop it first. (The cached catalog is still served.)'
+        : 'The catalog is being refreshed; try again in a moment.',
+    );
+  }
+}
+
 /**
- * Owns the single Chrome tab that playback happens in. We launch Chrome
- * ourselves and attach over CDP rather than letting Playwright launch it:
- * Playwright's launch adds automation flags that streaming sites can detect,
- * and its bundled Chromium ships without Widevine.
+ * Owns the single Chrome tab that playback happens in (the one Sunshine
+ * shows). We launch Chrome ourselves and attach over CDP rather than letting
+ * Playwright launch it: Playwright's launch adds automation flags that
+ * streaming sites can detect, and its bundled Chromium ships without Widevine.
+ *
+ * Playback and catalog scraping both drive this tab, so whoever navigates it
+ * must hold the lease (claim/release) for as long as they need it.
  */
 export class ChromeHost {
   #browser: Browser | undefined;
   #page: Page | undefined;
   #connecting: Promise<Page> | undefined;
+  #holder: PageOwner | undefined;
+
+  /** Throws PageBusyError if someone else holds the tab. Re-claiming your own lease is fine. */
+  claim(owner: PageOwner): void {
+    if (this.#holder && this.#holder !== owner) throw new PageBusyError(this.#holder);
+    this.#holder = owner;
+  }
+
+  release(owner: PageOwner): void {
+    if (this.#holder === owner) this.#holder = undefined;
+  }
 
   page(): Promise<Page> {
     if (this.#page && !this.#page.isClosed()) return Promise.resolve(this.#page);
@@ -53,6 +79,18 @@ export class ChromeHost {
   }
 
   async #connect(): Promise<Page> {
+    // Reuse a live CDP connection; only re-attach when it actually dropped.
+    const browser = this.#browser?.isConnected() ? this.#browser : await this.#attach();
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    const page = context.pages()[0] ?? (await context.newPage());
+    // With several tabs open (restored session, one opened over Moonlight),
+    // make sure the one we drive is the one on screen.
+    await page.bringToFront();
+    this.#page = page;
+    return page;
+  }
+
+  async #attach(): Promise<Browser> {
     if (!(await cdpReachable())) {
       console.log('[chrome] not running, launching');
       launchChrome();
@@ -63,10 +101,8 @@ export class ChromeHost {
       this.#browser = undefined;
       this.#page = undefined;
     });
-    const context = browser.contexts()[0] ?? (await browser.newContext());
     this.#browser = browser;
-    this.#page = context.pages()[0] ?? (await context.newPage());
-    return this.#page;
+    return browser;
   }
 
   async close(): Promise<void> {

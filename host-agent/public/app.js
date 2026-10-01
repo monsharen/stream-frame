@@ -4,6 +4,9 @@ const $ = (id) => document.getElementById(id);
 let currentService;
 let state = { status: 'idle', position: 0, duration: 0 };
 let scrubbing = false;
+// Errors from our own actions (not part of the agent's state); they stay
+// until the next action succeeds rather than vanishing on the next poll.
+let actionError = '';
 
 async function api(path, body) {
   const headers = { 'content-type': 'application/json' };
@@ -43,9 +46,9 @@ async function selectService(id, refresh = false) {
   $('catalog').replaceChildren(el('p', { className: 'hint', textContent: refresh ? 'Refreshing…' : 'Loading…' }));
   try {
     const catalog = await api(`/api/catalog/${id}${refresh ? '?refresh' : ''}`);
-    renderCatalog(catalog);
+    if (currentService === id) renderCatalog(catalog); // ignore a slow response for a tab we left
   } catch (err) {
-    $('catalog').replaceChildren(el('p', { className: 'error', textContent: err.message }));
+    if (currentService === id) $('catalog').replaceChildren(el('p', { className: 'error', textContent: err.message }));
   }
 }
 
@@ -59,7 +62,7 @@ function renderCatalog(catalog) {
       el('section', { className: 'row' }, [
         el('h2', { textContent: row.title }),
         el('div', { className: 'cards' }, row.items.map((item) =>
-          el('button', { className: 'card', title: item.title, onclick: () => play(item) }, [
+          el('button', { className: 'card', title: item.title, onclick: () => play(catalog.service, item) }, [
             el('img', { src: item.image ?? '', alt: '', loading: 'lazy' }),
             el('span', { textContent: item.title }),
           ]),
@@ -69,36 +72,33 @@ function renderCatalog(catalog) {
   );
 }
 
-async function play(item) {
-  try {
-    await api('/api/play', { service: currentService, watchUrl: item.watchUrl, title: item.title });
-  } catch (err) {
-    showError(err.message);
-  }
+async function play(service, item) {
+  await act(() => api('/api/play', { service, watchUrl: item.watchUrl, title: item.title }));
 }
 
 async function control(action, value) {
-  try {
-    await api('/api/control', { action, value });
-  } catch (err) {
-    showError(err.message);
-  }
+  await act(() => api('/api/control', { action, value }));
 }
 
-function showError(message) {
-  $('np-error').textContent = message;
-  $('np-error').hidden = !message;
-  $('now-playing').hidden = false;
+async function act(request) {
+  try {
+    await request();
+    actionError = '';
+  } catch (err) {
+    actionError = err.message;
+  }
+  renderState();
 }
 
 function renderState() {
-  $('now-playing').hidden = state.status === 'idle';
+  const error = actionError || state.error || '';
+  $('now-playing').hidden = state.status === 'idle' && !error;
   $('np-title').textContent = state.title ?? '';
   $('np-status').textContent = state.status === 'playing' ? '' : state.status;
   $('toggle').textContent = state.status === 'paused' ? 'Play' : 'Pause';
   $('np-time').textContent = `${formatTime(state.position)} / ${formatTime(state.duration)}`;
-  $('np-error').textContent = state.error ?? '';
-  $('np-error').hidden = !state.error;
+  $('np-error').textContent = error;
+  $('np-error').hidden = !error;
   if (!scrubbing) {
     $('scrubber').max = String(Math.floor(state.duration));
     $('scrubber').value = String(Math.floor(state.position));

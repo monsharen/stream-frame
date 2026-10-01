@@ -19,6 +19,10 @@ type VideoSnapshot = { currentTime: number; duration: number; paused: boolean; e
 
 const POLL_MS = 500;
 const START_TIMEOUT_MS = 60_000;
+// How long the video may be missing (site navigated away, error page, browser
+// gone) before the session is considered over. Covers brief gaps such as a
+// player swapping its <video> element between episodes.
+const LOST_VIDEO_POLLS = 10;
 
 function readVideo(page: Page): Promise<VideoSnapshot | null> {
   return page.evaluate(() => {
@@ -40,6 +44,7 @@ export class Player extends EventEmitter<{ state: [PlaybackState] }> {
   #poll: NodeJS.Timeout | undefined;
   // Bumped on every play/stop so a superseded play() doesn't clobber state.
   #generation = 0;
+  #missedPolls = 0;
 
   constructor(chrome: ChromeHost) {
     super();
@@ -50,18 +55,24 @@ export class Player extends EventEmitter<{ state: [PlaybackState] }> {
     return this.#state;
   }
 
-  get busy(): boolean {
-    return this.#state.status !== 'idle' && this.#state.status !== 'error';
-  }
-
-  async play(service: ServiceAdapter, watchUrl: string, title?: string): Promise<void> {
+  /**
+   * Starts loading a title and returns immediately; follow progress via
+   * 'state'. Throws PageBusyError synchronously if a catalog refresh holds
+   * the browser tab.
+   */
+  play(service: ServiceAdapter, watchUrl: string, title?: string): void {
+    this.#chrome.claim('playback');
     const generation = ++this.#generation;
     this.#stopPolling();
     this.#service = service;
     this.#set({ status: 'loading', service: service.id, title, watchUrl, position: 0, duration: 0, error: undefined });
+    void this.#load(service, watchUrl, generation);
+  }
 
+  async #load(service: ServiceAdapter, watchUrl: string, generation: number): Promise<void> {
     try {
       const page = await this.#chrome.page();
+      await page.bringToFront();
       await page.goto(watchUrl, { waitUntil: 'domcontentloaded' });
       if (service.playerCss) await page.addStyleTag({ content: service.playerCss });
       await page.waitForFunction(
@@ -77,18 +88,24 @@ export class Player extends EventEmitter<{ state: [PlaybackState] }> {
       this.#startPolling(page, generation);
     } catch (err) {
       if (generation !== this.#generation) return;
-      this.#set({ status: 'error', error: err instanceof Error ? err.message : String(err) });
+      this.#fail(err instanceof Error ? err.message : String(err));
     }
   }
 
   async stop(): Promise<void> {
     this.#generation++;
     this.#stopPolling();
-    const page = await this.#chrome.page();
-    await page.goto('about:blank');
-    this.#service = undefined;
-    this.#state = { status: 'idle', position: 0, duration: 0 };
-    this.emit('state', this.#state);
+    try {
+      const page = await this.#chrome.page();
+      await page.goto('about:blank');
+    } finally {
+      // Even if Chrome is unreachable, the session is over as far as clients
+      // and the tab lease are concerned.
+      this.#service = undefined;
+      this.#chrome.release('playback');
+      this.#state = { status: 'idle', position: 0, duration: 0 };
+      this.emit('state', this.#state);
+    }
   }
 
   async toggle(): Promise<void> {
@@ -124,24 +141,42 @@ export class Player extends EventEmitter<{ state: [PlaybackState] }> {
   }
 
   async #activePage(): Promise<Page> {
-    if (!this.#service || this.#state.status === 'idle') throw new Error('Nothing is playing');
+    if (!this.#service || this.#state.status === 'idle' || this.#state.status === 'error') {
+      throw new Error('Nothing is playing');
+    }
     return this.#chrome.page();
   }
 
   #startPolling(page: Page, generation: number): void {
+    this.#missedPolls = 0;
     this.#poll = setInterval(() => this.#sample(page, generation), POLL_MS);
   }
 
   /** Reads the video element into state. Also called right after controls so clients see the effect immediately. */
   async #sample(page: Page, generation: number): Promise<void> {
+    let video: VideoSnapshot | null = null;
     try {
-      const video = await readVideo(page);
-      if (generation !== this.#generation || !video) return;
-      const status: PlaybackStatus = video.ended ? 'ended' : video.paused ? 'paused' : 'playing';
-      this.#set({ status, position: video.currentTime, duration: video.duration });
+      video = await readVideo(page);
     } catch {
-      // Page mid-navigation or Chrome gone; the next poll will tell.
+      // Page mid-navigation or Chrome gone; treated like a missing video below.
     }
+    if (generation !== this.#generation) return;
+    if (!video) {
+      if (++this.#missedPolls >= LOST_VIDEO_POLLS) {
+        this.#stopPolling();
+        this.#fail('Playback stopped on the host (the video went away)');
+      }
+      return;
+    }
+    this.#missedPolls = 0;
+    const status: PlaybackStatus = video.ended ? 'ended' : video.paused ? 'paused' : 'playing';
+    this.#set({ status, position: video.currentTime, duration: video.duration });
+  }
+
+  /** Ends the session in an error state and frees the tab for catalog refreshes. */
+  #fail(message: string): void {
+    this.#chrome.release('playback');
+    this.#set({ status: 'error', error: message });
   }
 
   #stopPolling(): void {

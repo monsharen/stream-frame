@@ -6,12 +6,12 @@ import { createServer } from './server.ts';
 
 const chrome = new ChromeHost();
 const player = new Player(chrome);
-const catalogs = new CatalogStore(chrome, player);
+const catalogs = new CatalogStore(chrome);
 const server = createServer(player, catalogs);
 
 server.listen(config.port, config.host, () => {
   console.log(`[agent] listening on http://${config.host}:${config.port}`);
-  if (!config.token) console.warn('[agent] AGENT_TOKEN is not set: anyone on the network can control playback');
+  console.log(`[agent] remote: http://<this-machine>:${config.port}/?token=${config.token}`);
 });
 
 // Warm up Chrome so the first play doesn't pay the launch cost.

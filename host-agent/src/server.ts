@@ -1,8 +1,11 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { PlayerBusyError, type CatalogStore } from './catalog.ts';
+import type { CatalogStore } from './catalog.ts';
+import { PageBusyError } from './chrome.ts';
 import { config } from './config.ts';
 import type { Player } from './player.ts';
 import { getService, services } from './services/index.ts';
@@ -23,19 +26,63 @@ class HttpError extends Error {
   }
 }
 
+const MAX_BODY_BYTES = 64 * 1024;
+
+function sameSecret(given: string | null | undefined, expected: string): boolean {
+  if (!given) return false;
+  // Hash first so timingSafeEqual gets equal-length inputs.
+  const digest = (v: string) => crypto.createHash('sha256').update(v).digest();
+  return crypto.timingSafeEqual(digest(given), digest(expected));
+}
+
 function authorized(req: http.IncomingMessage, url: URL): boolean {
-  if (!config.token) return true;
-  return req.headers.authorization === `Bearer ${config.token}` || url.searchParams.get('token') === config.token;
+  const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+  return sameSecret(bearer, config.token) || sameSecret(url.searchParams.get('token'), config.token);
+}
+
+/** Host header must be an IP, localhost or a configured name; blocks DNS rebinding. */
+function hostAllowed(req: http.IncomingMessage): boolean {
+  const host = req.headers.host;
+  if (!host) return false;
+  const name = host.startsWith('[') ? host.slice(1, host.indexOf(']')) : host.replace(/:\d+$/, '');
+  return net.isIP(name) !== 0 || config.allowedHosts.includes(name.toLowerCase());
+}
+
+/** Browsers send Origin on cross-site requests and WebSocket upgrades; only same-origin is allowed. */
+function originAllowed(req: http.IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true; // non-browser clients (the headset app) and same-origin GETs
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
 }
 
 async function readJson(req: http.IncomingMessage): Promise<any> {
+  // Requiring a JSON content type means cross-site pages can't send these as
+  // "simple" requests; they'd need a CORS preflight, which we never grant.
+  if (!req.headers['content-type']?.startsWith('application/json')) {
+    throw new HttpError(415, 'Content-Type must be application/json');
+  }
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) throw new HttpError(413, 'Request body too large');
+    chunks.push(chunk);
+  }
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
   } catch {
     throw new HttpError(400, 'Invalid JSON body');
   }
+}
+
+function seconds(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number.NaN;
+  if (!Number.isFinite(n)) throw new HttpError(400, 'value must be a number of seconds');
+  return n;
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown): void {
@@ -80,7 +127,7 @@ export function createServer(player: Player, catalogs: CatalogStore): http.Serve
         throw new HttpError(400, `Not a ${service.name} watch URL`);
       }
       // Loading can take a while; the client follows progress over the WebSocket.
-      void player.play(service, watchUrl, title);
+      player.play(service, watchUrl, typeof title === 'string' ? title : undefined);
       return send(res, 202, player.state);
     }
 
@@ -90,8 +137,8 @@ export function createServer(player: Player, catalogs: CatalogStore): http.Serve
         case 'toggle': await player.toggle(); break;
         case 'play': await player.setPaused(false); break;
         case 'pause': await player.setPaused(true); break;
-        case 'seekBy': await player.seekBy(Number(value)); break;
-        case 'seekTo': await player.seekTo(Number(value)); break;
+        case 'seekBy': await player.seekBy(seconds(value)); break;
+        case 'seekTo': await player.seekTo(Math.max(0, seconds(value))); break;
         case 'stop': await player.stop(); break;
         default: throw new HttpError(400, `Unknown action: ${action}`);
       }
@@ -104,14 +151,16 @@ export function createServer(player: Player, catalogs: CatalogStore): http.Serve
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     try {
+      if (!hostAllowed(req)) throw new HttpError(403, 'Unknown Host; add it to ALLOWED_HOSTS');
       if (!url.pathname.startsWith('/api/')) return await serveStatic(res, url.pathname);
+      if (!originAllowed(req)) throw new HttpError(403, 'Cross-origin requests are not allowed');
       if (!authorized(req, url)) throw new HttpError(401, 'Missing or wrong token');
       await handleApi(req, res, url);
     } catch (err) {
       const status =
         err instanceof HttpError ? err.status
         : err instanceof NotLoggedInError ? 409
-        : err instanceof PlayerBusyError ? 409
+        : err instanceof PageBusyError ? 409
         : 500;
       if (status === 500) console.error(`[http] ${req.method} ${url.pathname}:`, err);
       send(res, status, { error: err instanceof Error ? err.message : String(err) });
@@ -121,7 +170,7 @@ export function createServer(player: Player, catalogs: CatalogStore): http.Serve
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname !== '/ws' || !authorized(req, url)) {
+    if (url.pathname !== '/ws' || !hostAllowed(req) || !originAllowed(req) || !authorized(req, url)) {
       socket.destroy();
       return;
     }
