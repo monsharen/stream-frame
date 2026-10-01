@@ -49,7 +49,7 @@ func _unconfigured_pass() -> Variant:
 	if app.current_view != "browse":
 		return "the app should open on the home, not %s" % app.current_view
 	var home_ids: Array = app.sources.map(func(s: Dictionary) -> String: return s["id"])
-	if home_ids != ["open-movies", "netflix", "demo", "extensions"]:
+	if home_ids != ["open-movies", "internet-archive", "nasa", "peertube", "netflix", "demo", "extensions"]:
 		return "the home should show the enabled extensions and the Extensions app, got %s" % [home_ids]
 	var netflix := _source("netflix")
 	if not _source("open-movies").get("available") or netflix.get("available", true):
@@ -90,14 +90,19 @@ func _unconfigured_pass() -> Variant:
 	print("ok: switching extensions on/off updates the home")
 	app.open_extensions("open-movies")
 	_toggle("Open movies").toggled.emit(true)
-	app.extensions_view._select("open-movies")
-	app.extensions_view._config_fields["player_command"].text = "my-player --fullscreen"
+	# Per-extension configuration (PeerTube) and the shared on-device player.
+	app.extensions_view._select("peertube")
+	app.extensions_view._config_fields["topics"].text = "space, ocean"
 	_button(app.extensions_view, "Save").pressed.emit()
-	if app.local.command != "my-player --fullscreen":
-		return "saving Open movies' configuration should apply it"
+	app.extensions_view._select(ExtensionsView.DEVICE)
+	app.extensions_view._config_fields["player_command"].text = "my-player --fullscreen {url}"
+	_button(app.extensions_view, "Save").pressed.emit()
+	if app.local.command != "my-player --fullscreen {url}":
+		return "saving the on-device player should apply it"
 	var saved := Settings.load_or_default()
 	if not saved.is_extension_enabled("disney", false) or not saved.is_extension_enabled("open-movies", false) \
-			or ExtensionRegistry.config_value(saved, "open-movies", "player_command") != "my-player --fullscreen":
+			or ExtensionRegistry.config_value(saved, "peertube", "topics") != "space, ocean" \
+			or saved.player_command != "my-player --fullscreen {url}":
 		return "extension toggles and configuration should be saved"
 	app.local.command = "bash " + ProjectSettings.globalize_path("res://tests/fake_moonlight.sh")
 	print("ok: configuring an extension applies and saves it")

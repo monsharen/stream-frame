@@ -60,6 +60,7 @@ func show_source(source: Dictionary, error := "") -> void:
 	_error.visible = error != ""
 	_reason.text = source["reason"]
 	for child in _steps.get_children():
+		_steps.remove_child(child)
 		child.queue_free()
 	var steps: Array = source["steps"]
 	if not steps.is_empty():

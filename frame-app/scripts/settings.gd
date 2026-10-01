@@ -1,13 +1,14 @@
 class_name Settings
 extends RefCounted
 ## Persistent app settings: the PC connection (shared by all PC extensions),
-## which extensions are enabled, and each extension's own configuration.
-## Any PC-connection key can be overridden with a STREAM_FRAME_<KEY>
+## the on-device player (shared by all on-device ones), which extensions are
+## enabled, and each extension's own configuration.
+## Any top-level key can be overridden with a STREAM_FRAME_<KEY>
 ## environment variable, and STREAM_FRAME_SETTINGS_PATH moves the file, which
 ## is handy for development and tests.
 
 const DEFAULT_PATH := "user://settings.cfg"
-const KEYS := ["agent_url", "token", "sunshine_host", "sunshine_app", "moonlight_command", "last_source"]
+const KEYS := ["agent_url", "token", "sunshine_host", "sunshine_app", "moonlight_command", "player_command", "last_source"]
 
 var agent_url := ""
 var token := ""
@@ -16,6 +17,9 @@ var sunshine_host := ""
 var sunshine_app := "Desktop"
 ## Split on spaces, so e.g. "flatpak run com.moonlight_stream.Moonlight" works.
 var moonlight_command := "moonlight"
+## Plays on-device titles until video plays on the 3D screen itself (see
+## LocalPlayer.DEFAULT_COMMAND for the placeholders).
+var player_command := LocalPlayer.DEFAULT_COMMAND
 var last_source := ""
 
 ## Extension id -> enabled, for extensions the user has switched; the rest

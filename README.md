@@ -6,6 +6,8 @@ Watch Netflix and other streaming services on the Steam Frame in full quality. Y
 
 ![The movie wall wrapped around you](docs/images/shell_wall.png)
 
+![The Internet Archive's public-domain films on the wall, streamed straight to the headset](docs/images/shell_archive.png)
+
 | Look at a poster to highlight it | Pick it and it flies into the screen | Playback controls |
 |---|---|---|
 | ![Hovered poster](docs/images/shell_hover.png) | ![Poster flying into the screen](docs/images/shell_flight.png) | ![Player on the curved screen](docs/images/shell_player.png) |
@@ -31,9 +33,14 @@ The plain 2D UI (`--flat`):
 
 - **host-agent** (`host-agent/`): a Node service on the PC. It drives Chrome, scrapes the catalog and exposes a control API, plus a web remote you can open on a phone.
 - **frame-app** (`frame-app/`): a Godot app for the headset. Sources are **extensions**; the home shows the enabled ones, grouped by where they play, plus the **Extensions** app:
-  - **On this device**: no DRM, played directly on the headset (no PC needed). Today that's *Open movies* (the Blender open films); Jellyfin and YouTube are coming.
+  - **On this device**: public, DRM-free sources played directly on the headset (no PC needed):
+    - *Open movies*: the Blender Studio open films (CC-BY).
+    - *Internet Archive*: thousands of public-domain feature films, silent films, cartoons and classic TV.
+    - *NASA*: public-domain mission and science video (Apollo, Artemis, Mars, space telescopes…).
+    - *PeerTube*: the open, federated video network, searched across instances via SepiaSearch; configurable search index, topics and language; videos marked sensitive are never shown.
+    - Jellyfin and YouTube are coming.
   - **From your PC**: DRM-protected services (Netflix; Disney+, Max and Prime Video are listed but off until the host agent supports them), plus *Demo films (via PC)* for checking the PC setup. They share one PC connection. Services the host agent offers that the app doesn't know yet appear as extensions automatically.
-  - **Extensions app**: switch extensions on or off, configure them (e.g. Open movies' video player), and set up the PC connection or try the offline demo.
+  - **Extensions app**: switch extensions on or off, configure them (e.g. PeerTube's topics), set the on-device video player, and set up the PC connection or try the offline demo.
 
   An extension that can't be used right now says why on its tile (problems in red); launching it explains what's up and what to do next, e.g. a checklist when the PC is offline. If a catalog fails while browsing, *What's wrong?* gives the same help with the error.
 
@@ -101,7 +108,7 @@ PC connection settings can be overridden with `STREAM_FRAME_<SETTING>` env vars,
 
 - **Needs a PC.** Streaming services only decrypt video in licensed DRM. On the headset's own Linux/Android environment that means 480p–720p at most, so playback runs in Chrome on a Windows or macOS host instead.
 - **Software DRM only.** Capture works because Chrome's software Widevine path can be screen-captured. Services that reserve their highest resolutions for hardware DRM will serve Chrome a lower one, so don't expect 4K. Safari/FairPlay can't be captured at all.
-- **Video plays in separate windows for now.** PC titles open in Moonlight and on-device titles in an external player (mpv by default; configure it under Extensions → Open movies), next to the 3D scene rather than on the curved screen. Playing video on the screen itself is next.
+- **Video plays in separate windows for now.** PC titles open in Moonlight and on-device titles in an external player (mpv by default; configure it under Extensions → On-device player), next to the 3D scene rather than on the curved screen. Playing video on the screen itself is next.
 - **Netflix is unverified.** The adapter (`host-agent/src/services/netflix.ts`) follows Netflix's known markup but hasn't been tested against a logged-in session yet, so expect broken selectors. The DRM-free **Demo** service works end to end.
 - **One viewer at a time.** There is one Chrome and one playback tab. Catalog refresh is refused while something is playing, and playback is refused while a refresh runs.
 - **Latency and quality depend on your network.** It's a game stream, so Wi-Fi conditions affect what you see.
@@ -123,6 +130,9 @@ cd host-agent && npm test && cd ..
 
 # full pipeline against a real agent (headless Chromium, fake Moonlight)
 GODOT=/path/to/godot frame-app/tests/run_selftest.sh
+
+# on-device extensions against the live services (needs internet)
+godot --headless --path frame-app res://tests/providers_test.tscn
 
 # offline UI and 3D shell
 STREAM_FRAME_SETTINGS_PATH=$(mktemp -u) godot --headless --path frame-app res://tests/offline_test.tscn

@@ -74,6 +74,9 @@ func _ready() -> void:
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 	_apply_extension_config()
+	for provider: VideoProvider in [OpenMoviesProvider.new(), InternetArchiveProvider.new(),
+			NasaProvider.new(), PeerTubeProvider.new()]:
+		local.add_provider(provider, settings)
 	for node: Node in [agent, local, images, stream]:
 		add_child(node)
 	_playback = agent
@@ -189,7 +192,7 @@ func pc_status() -> String:
 
 
 func _apply_extension_config() -> void:
-	local.command = ExtensionRegistry.config_value(settings, "open-movies", "player_command")
+	local.command = settings.player_command
 
 
 func show_home() -> void:

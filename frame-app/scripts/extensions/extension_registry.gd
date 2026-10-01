@@ -18,13 +18,34 @@ enum Host { NOT_CONFIGURED, CONNECTING, OFFLINE, ONLINE, DEMO }
 
 const DEFINITIONS := [
 	{
-		"id": "open-movies", "name": "Open movies", "kind": "local", "color": "e87d0d",
+		"id": "open-movies", "name": "Open movies", "kind": "local", "color": "265787",
 		"default_enabled": true, "ready": true,
-		"description": "The Blender Studio open movies, free to watch, streamed straight to this device. No PC needed.",
+		"description": "The Blender Studio open movies (CC-BY), streamed straight to this device. No PC needed.",
+	},
+	{
+		"id": "internet-archive", "name": "Internet Archive", "kind": "local", "color": "5a6472",
+		"default_enabled": true, "ready": true,
+		"description": "Thousands of public-domain feature films, silent films, cartoons and classic TV from archive.org, streamed to this device.",
+	},
+	{
+		"id": "nasa", "name": "NASA", "kind": "local", "color": "0b3d91",
+		"default_enabled": true, "ready": true,
+		"description": "Public-domain videos from NASA's Image and Video Library: Apollo, Artemis, Mars, space telescopes and more.",
+	},
+	{
+		"id": "peertube", "name": "PeerTube", "kind": "local", "color": "f1680d",
+		"default_enabled": true, "ready": true,
+		"description": "Videos from PeerTube, the open, federated video network, searched across its instances. Each video's licence is set by its creator; videos marked sensitive are never shown.",
 		"config": [
-			{"key": "player_command", "label": "Video player", "placeholder": "mpv --fs",
-				"default": "mpv --fs --force-window=immediate",
-				"help": "Plays titles until video plays on the 3D screen itself. The video URL is added at the end."},
+			{"key": "search_index", "label": "Search index", "placeholder": "https://sepiasearch.org",
+				"default": "https://sepiasearch.org",
+				"help": "A PeerTube search index (https). SepiaSearch indexes most public instances."},
+			{"key": "topics", "label": "Topics", "placeholder": "nature, science, documentary",
+				"default": "nature, science, documentary, animation, travel, music",
+				"help": "One row per topic, comma-separated."},
+			{"key": "language", "label": "Language", "placeholder": "Any (e.g. en, sv, fr)",
+				"default": "",
+				"help": "Only show videos in this language (a two-letter code). Empty shows all."},
 		],
 	},
 	{

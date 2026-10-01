@@ -135,6 +135,23 @@ func _set_texture(loaded: Texture2D) -> void:  # posters only; source cards have
 	if loaded:
 		_art_material.albedo_texture = loaded
 		_art_material.albedo_color = Color(1, 1, 1, _alpha)
+		_cover(loaded.get_size())
+
+
+## Crops the artwork to fill the tile without stretching (like
+## STRETCH_KEEP_ASPECT_COVERED): thumbnails come in every shape.
+func _cover(texture_size: Vector2) -> void:
+	if texture_size.x <= 0 or texture_size.y <= 0:
+		return
+	var tile_aspect := SIZE.x / SIZE.y
+	var texture_aspect := texture_size.x / texture_size.y
+	var scale := Vector2.ONE
+	if texture_aspect > tile_aspect:
+		scale.x = tile_aspect / texture_aspect  # wider: crop the sides
+	else:
+		scale.y = texture_aspect / tile_aspect  # taller: crop top and bottom
+	_art_material.uv1_scale = Vector3(scale.x, scale.y, 1)
+	_art_material.uv1_offset = Vector3((1 - scale.x) / 2, (1 - scale.y) / 2, 0)
 
 
 func _apply_alpha() -> void:

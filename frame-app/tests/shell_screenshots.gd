@@ -40,9 +40,17 @@ func _ready() -> void:
 	await get_tree().create_timer(0.8).timeout
 	await _aim(Vector3(0, 1.6, -2.4))
 	await _capture(out.path_join("shell_info.png"))
-	ui.open_extensions("open-movies")
+	ui.open_extensions("peertube")
 	await get_tree().create_timer(0.8).timeout
 	await _capture(out.path_join("shell_extensions.png"))
+
+	# A live on-device catalog: the Internet Archive (needs internet).
+	ui.open_source(ExtensionRegistry.by_id(ui.sources, "internet-archive"))
+	while ui.browse.is_loading() or wall._loading or wall._rows.size() < 3:
+		await get_tree().create_timer(0.1).timeout
+	await get_tree().create_timer(6.0).timeout  # posters
+	await _aim(Vector3(0, 1.4, -3.0))
+	await _capture(out.path_join("shell_archive.png"))
 	ui.show_home()
 
 	ui.open_source(ExtensionRegistry.by_id(ui.sources, "demo"))

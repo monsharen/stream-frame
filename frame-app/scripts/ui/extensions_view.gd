@@ -12,6 +12,7 @@ signal pc_saved
 signal demo_requested(on: bool)
 
 const PC := "__pc__"
+const DEVICE := "__device__"
 const PC_FIELDS := [
 	["agent_url", "Host agent URL", "http://192.168.1.20:8787"],
 	["token", "Agent token", "Printed by the agent when it starts"],
@@ -93,7 +94,7 @@ func update_status(extensions: Array, pc_status: String) -> void:
 	if _selected == PC:
 		var status: Label = _detail.get_child(1)
 		status.text = pc_status
-	elif _detail.get_child_count() > 1:
+	elif _selected != DEVICE and _detail.get_child_count() > 1:
 		var extension := ExtensionRegistry.by_id(_extensions, _selected)
 		var status: Label = _detail.get_child(1)
 		status.text = _status_text(extension)
@@ -114,6 +115,9 @@ func _rebuild_list() -> void:
 	var pc_row := _row("PC connection", _pc_status, _selected == PC, UiTheme.MUTED)
 	pc_row.pressed.connect(_select.bind(PC))
 	_list.add_child(pc_row)
+	var device_row := _row("On-device player", _settings.player_command.get_slice(" ", 0), _selected == DEVICE, UiTheme.MUTED)
+	device_row.pressed.connect(_select.bind(DEVICE))
+	_list.add_child(device_row)
 	for group in [["On this device", "local"], ["From your PC", "remote"]]:
 		_list.add_child(UiTheme.label(group[0], 26, UiTheme.MUTED))
 		for extension in _extensions.filter(func(e: Dictionary) -> bool: return e["kind"] == group[1]):
@@ -182,12 +186,17 @@ func _select(id: String) -> void:
 
 
 func _show_detail() -> void:
+	# Detach now, free later: the old page's buttons mustn't linger until
+	# the end of the frame (focus and lookups would find them).
 	for child in _detail.get_children():
+		_detail.remove_child(child)
 		child.queue_free()
 	_pc_fields.clear()
 	_config_fields.clear()
 	if _selected == PC:
 		_show_pc()
+	elif _selected == DEVICE:
+		_show_device()
 	else:
 		_show_extension(ExtensionRegistry.by_id(_extensions, _selected))
 
@@ -204,6 +213,27 @@ func _show_pc() -> void:
 	var buttons := _buttons()
 	buttons.add_child(UiTheme.button("Leave offline demo" if _offline else "Try offline demo", demo_requested.emit.bind(not _offline)))
 	buttons.add_child(UiTheme.button("Save and connect", _save_pc))
+
+
+func _show_device() -> void:
+	_detail.add_child(UiTheme.label("On-device player", 44))
+	_detail.add_child(UiTheme.label("Used by all on-device extensions", 26, UiTheme.ACCENT))
+	var about := UiTheme.label("Until video plays on the 3D screen itself, on-device titles open in this video player. {title} and {url} are replaced per title; without {url}, \"-- <url>\" is added at the end. With mpv, keep --no-ytdl and the \"--\" before {url}: addresses come from third-party catalogs.", 24, UiTheme.MUTED)
+	about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail.add_child(about)
+	var grid := _grid()
+	_config_fields["player_command"] = _field(grid, "Command", "mpv … -- {url}", _settings.player_command, false)
+	var buttons := _buttons()
+	buttons.add_child(UiTheme.button("Reset", func() -> void:
+		_config_fields["player_command"].text = LocalPlayer.DEFAULT_COMMAND))
+	buttons.add_child(UiTheme.button("Save", _save_device))
+
+
+func _save_device() -> void:
+	var text := _config_fields["player_command"].text.strip_edges()
+	_settings.player_command = text if text != "" else LocalPlayer.DEFAULT_COMMAND
+	_settings.save()
+	extension_configured.emit(DEVICE)
 
 
 func _show_extension(extension: Dictionary) -> void:
