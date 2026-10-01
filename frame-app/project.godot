@@ -7,6 +7,11 @@ config/name="Stream Frame"
 config/description="Browse and control streaming playback on the Steam Frame."
 run/main_scene="res://shell.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
+boot_splash/bg_color=Color(0.012, 0.016, 0.03, 1)
+boot_splash/image="res://assets/brand/splash.png"
+boot_splash/stretch_mode=4
+boot_splash/use_filter=true
+config/icon="res://assets/brand/icon.png"
 
 [display]
 
@@ -23,5 +28,7 @@ renderer/rendering_method.mobile="gl_compatibility"
 [xr]
 
 openxr/enabled=true
+openxr/foveation_level=2
+openxr/foveation_dynamic=true
 openxr/startup_alert=false
 shaders/enabled=true

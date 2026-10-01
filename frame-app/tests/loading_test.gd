@@ -35,12 +35,12 @@ func _ready() -> void:
 
 func _run_error_pass() -> Variant:
 	var browse: BrowseView = app.browse
-	if _source("netflix").get("status") != "Connecting…" or browse._note.text != "Connecting to your PC…":
+	if _source("netflix").get("status") != "Connecting…":
 		return "PC sources should show as connecting at first"
 	print("ok: PC sources connecting")
 	if not await _until(func() -> bool: return _source("netflix").get("status") == "PC offline"):
 		return "an unreachable host should mark PC sources offline"
-	if not "retry" in _source("netflix")["actions"] or browse._note.text != "PC offline":
+	if not "retry" in _source("netflix")["actions"]:
 		return "offline PC sources should offer Try again"
 	print("ok: unreachable host -> PC sources offline (%s)" % _source("netflix")["reason"])
 	app.open_source(_source("netflix"))

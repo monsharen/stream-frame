@@ -5,7 +5,7 @@ extends Control
 const TURNS_PER_SECOND := 1.1
 const ARC := TAU * 0.7
 
-var color := UiTheme.ACCENT
+var color := UiTheme.TEXT
 var thickness := 4.0
 var _angle := 0.0
 

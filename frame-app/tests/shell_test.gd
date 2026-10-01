@@ -55,6 +55,8 @@ func _run() -> Variant:
 	await _click()
 	if not await _until(func() -> bool: return app.current_view == "info" and screen.visible and not wall.interactive):
 		return "clicking a greyed-out source should show its info page on the big screen"
+	if wall._dim_target != MovieWall.DIMMED:
+		return "behind an info page the wall should be dimmed, not hidden"
 	app.info_view.back_requested.emit()
 	if not await _until(func() -> bool: return app.current_view == "browse" and wall.interactive):
 		return "Back from the info page should return to the wall"
@@ -67,7 +69,10 @@ func _run() -> Variant:
 	if not await _until(func() -> bool: return wall._rows.size() == OfflineAgent.catalog()["rows"].size() and not wall._loading):
 		return "opening a source should fill the wall with its catalog"
 	await _settle()
-	print("ok: source tile opens its catalog on the wall")
+	await get_tree().create_timer(MovieWall.LEAVE_SECONDS + 0.1).timeout
+	if wall.get_child_count() != wall._rows.size():
+		return "rows that animated out should be freed (%d children, %d rows)" % [wall.get_child_count(), wall._rows.size()]
+	print("ok: source tile opens its catalog on the wall; the old rows animate out and are freed")
 
 	# Look at the Refresh button on the deck and click it.
 	var refresh: Button = app.browse._refresh
@@ -105,7 +110,28 @@ func _run() -> Variant:
 		return "the big screen should take over after the poster flies in"
 	if wall.interactive or deck.visible:
 		return "the wall should be dimmed and the deck hidden while playing"
-	print("ok: poster click plays it, screen takes over, wall dims")
+	if wall._dim_target != MovieWall.HIDDEN:
+		return "while a film plays the wall should be hidden entirely, not just dimmed"
+	if not await _until(func() -> bool: return shell._spill.light_energy < 0.2):
+		return "the room lights should dim while a film plays"
+	print("ok: poster click plays it; viewing mode: wall hidden, deck hidden, lights down")
+
+	# The film's controls are on their own panel below the screen, never
+	# over the picture: look at Pause there and click it.
+	var bar: CurvedScreen = shell.controls_bar
+	if not await _until(func() -> bool: return app.agent.state.get("status") == "playing" and app.player._controls.visible and bar.visible):
+		return "the film's controls panel should show under the screen"
+	var toggle: Control = app.player._toggle
+	if toggle.get_global_rect().position.y < shell.UI_SIZE.y:
+		return "the controls should sit in the strip below the screen's area"
+	var pause_at := bar.pixel_to_point(toggle.get_global_rect().get_center())
+	if pause_at.y >= screen.global_position.y - screen.height / 2.0:
+		return "the controls panel should be below the screen"
+	if not await _look_and_click(pause_at):
+		return "could not aim at Pause on the controls panel"
+	if not await _until(func() -> bool: return app.agent.state.get("status") == "paused"):
+		return "clicking Pause on the controls panel should pause"
+	print("ok: controls on their own panel below the screen; Pause clicked by gaze")
 
 	app._stop()
 	if not await _until(func() -> bool: return app.current_view == "browse" and wall.interactive and not screen.visible):
@@ -133,22 +159,23 @@ func _run() -> Variant:
 	await _wheel(MOUSE_BUTTON_WHEEL_DOWN, 4, true)
 	if not await _until(func() -> bool: return row.offset < -0.4):
 		return "shift+wheel should scroll the row sideways"
-	if row.tiles[0].visible:
-		return "titles scrolled past the left edge should fade out"
+	if row.tiles[0] and row.tiles[0].visible:
+		return "titles scrolled past the left edge should fade out (or be freed)"
 	print("ok: long row overflows and scrolls sideways")
 	return ""
 
 
 func _tile_for_source(id: String) -> WallTile:
 	for row in shell.wall._rows:
-		for tile in row.tiles:
-			if tile.item.get("kind") == "source" and tile.item["source"]["id"] == id and not tile.is_queued_for_deletion():
+		for tile in row.tiles:  # slots are null for tiles not near view
+			if tile and tile.item.get("kind") == "source" and tile.item["source"]["id"] == id and not tile.is_queued_for_deletion():
 				return tile
 	return null
 
 
-## Lets the wall lay out freshly built rows before aiming at them.
+## Lets freshly built rows finish rising into place before aiming at them.
 func _settle() -> void:
+	await _until(func() -> bool: return shell.wall.is_settled())
 	for i in 2:
 		await get_tree().process_frame
 

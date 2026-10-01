@@ -40,7 +40,12 @@ func _run() -> Variant:
 
 	# --- Live services ---
 	var settings := Settings.new()
-	for provider: VideoProvider in [OpenMoviesProvider.new(), InternetArchiveProvider.new(), NasaProvider.new(), PeerTubeProvider.new()]:
+	# Jellyfin against the project's public demo server.
+	settings.set_extension_value("jellyfin", "server_url", "https://demo.jellyfin.org/stable")
+	settings.set_extension_value("jellyfin", "username", "demo")
+	var searches := {"open-movies": "sintel", "internet-archive": "chaplin", "nasa": "apollo", "peertube": "ocean", "jellyfin": "dracula"}
+	for provider: VideoProvider in [OpenMoviesProvider.new(), InternetArchiveProvider.new(), NasaProvider.new(),
+			PeerTubeProvider.new(), JellyfinProvider.new()]:
 		provider.settings = settings
 		add_child(provider)
 		var unknown: Dictionary = await provider.resolve("https://evil.example/not-issued.mp4")
@@ -57,7 +62,7 @@ func _run() -> Variant:
 			for item in row["items"]:
 				count += 1
 				with_images += 1 if str(item.get("image", "")).begins_with("https://") else 0
-		if rows.size() < 3 or count < 15:
+		if rows.size() < (2 if provider.id == "jellyfin" else 3) or count < (8 if provider.id == "jellyfin" else 15):
 			return "%s catalog too small: %d rows, %d titles" % [provider.id, rows.size(), count]
 		if with_images < count * 0.8:
 			return "%s: most titles should have an https thumbnail (%d/%d)" % [provider.id, with_images, count]
@@ -78,6 +83,33 @@ func _run() -> Variant:
 			return "%s: no title resolved to playable video" % provider.id
 		print("ok: %-16s %d rows, %d titles in %.1fs; '%s' resolves to video" % [
 			provider.id, rows.size(), count, (Time.get_ticks_msec() - started) / 1000.0, played])
+
+		var found: Dictionary = await provider.search(searches[provider.id])
+		if not found.ok or found.data["rows"][0]["items"].is_empty():
+			return "%s: searching '%s' found nothing (%s)" % [provider.id, searches[provider.id], found.get("error", "")]
+		var hit: Dictionary = found.data["rows"][0]["items"][0]
+		var hit_resolved: Dictionary = await provider.resolve(hit["watchUrl"])
+		if not hit_resolved.ok:
+			return "%s: a search result should be playable: %s" % [provider.id, hit_resolved.error]
+		var more_note := "no paging"
+		if provider._pages_rows():
+			var before: int = rows[0]["items"].size()
+			var more: Dictionary = await provider.more(0)
+			if not more.ok:
+				return "%s: paging failed: %s" % [provider.id, more.error]
+			if more.data["items"].is_empty():
+				# Fine if the row wasn't full to begin with: that was everything.
+				if before >= 24:
+					return "%s: a full first row should page in more titles" % provider.id
+				more_note = "row 1 complete at %d" % before
+			if not more.data["items"].is_empty():
+				var fresh: Array = more.data["items"].filter(func(i: Dictionary) -> bool:
+					return not rows[0]["items"].any(func(o: Dictionary) -> bool: return o["watchUrl"] == i["watchUrl"]))
+				if fresh.is_empty():
+					return "%s: the next page should hold new titles" % provider.id
+				more_note = "row 1 pages %d -> %d" % [before, before + more.data["items"].size()]
+		print("    search '%s' -> %d (first: '%s', playable); %s" % [searches[provider.id],
+			found.data["rows"][0]["items"].size(), hit["title"], more_note])
 	return ""
 
 

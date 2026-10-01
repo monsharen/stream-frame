@@ -20,12 +20,12 @@ var source_id := ""
 var error := ""
 
 var _title := UiTheme.label("", 56)
-var _status := UiTheme.label("", 30, UiTheme.ACCENT)
+var _status := UiTheme.label("", 30, UiTheme.MUTED)
 var _reason := UiTheme.label("", 32)
 var _error := UiTheme.label("", 28, UiTheme.ERROR)
 var _steps := VBoxContainer.new()
 var _buttons := HBoxContainer.new()
-var _back := UiTheme.button("Back", back_requested.emit)
+var _back := UiTheme.back_button(back_requested.emit)
 
 
 func _init() -> void:
@@ -36,7 +36,13 @@ func _init() -> void:
 	var layout := VBoxContainer.new()
 	layout.add_theme_constant_override("separation", 18)
 	panel.add_child(layout)
-	layout.add_child(_title)
+	# The back control, then the title, as in every view.
+	var top_bar := HBoxContainer.new()
+	top_bar.add_theme_constant_override("separation", 18)
+	_back.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	top_bar.add_child(_back)
+	top_bar.add_child(_title)
+	layout.add_child(top_bar)
 	layout.add_child(_status)
 	_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	layout.add_child(_error)
@@ -54,7 +60,7 @@ func show_source(source: Dictionary, error := "") -> void:
 	source_id = source["id"]
 	_title.text = source["name"]
 	_status.text = source["status"]
-	_status.add_theme_color_override("font_color", UiTheme.ERROR if source.get("problem", false) else UiTheme.ACCENT)
+	_status.add_theme_color_override("font_color", UiTheme.ERROR if source.get("problem", false) else UiTheme.MUTED)
 	self.error = error
 	_error.text = error
 	_error.visible = error != ""
@@ -71,9 +77,7 @@ func show_source(source: Dictionary, error := "") -> void:
 		_steps.add_child(step)
 	for child in _buttons.get_children():
 		_buttons.remove_child(child)
-		if child != _back:
-			child.queue_free()
-	_buttons.add_child(_back)
+		child.queue_free()
 	for action: String in source["actions"]:
 		_buttons.add_child(UiTheme.button(ACTION_LABELS[action], action_requested.emit.bind(action)))
 	for button: Button in _buttons.get_children():
@@ -82,10 +86,7 @@ func show_source(source: Dictionary, error := "") -> void:
 
 func focus_content() -> void:
 	# The first action (the most useful one) if there is one; Back otherwise.
-	(_buttons.get_child(mini(1, _buttons.get_child_count() - 1)) as Control).grab_focus()
-
-
-func _unhandled_input(event: InputEvent) -> void:
-	if is_visible_in_tree() and event.is_action_pressed("ui_cancel"):
-		back_requested.emit()
-		accept_event()
+	if _buttons.get_child_count() > 0:
+		(_buttons.get_child(0) as Control).grab_focus()
+	else:
+		_back.grab_focus()

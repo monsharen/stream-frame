@@ -22,29 +22,55 @@ func _init() -> void:
 
 
 func _fetch_catalog() -> Dictionary:
-	var urls := ROWS.map(func(r: Array) -> String:
-		return "https://images-api.nasa.gov/search?media_type=video&page_size=%d&q=%s" % [PER_ROW, r[1].uri_encode()])
+	var urls := ROWS.map(func(r: Array) -> String: return _search_url(r[1]))
 	var results: Array = await HttpJson.fetch_all(self, urls)
 	var rows := []
 	for i in ROWS.size():
 		if not results[i].ok:
 			return results[i]
-		var items := []
-		for entry in results[i].data.get("collection", {}).get("items", []):
-			var data: Dictionary = entry.get("data", [{}])[0]
-			var thumb := ""
-			for link in entry.get("links", []):
-				if link.get("render") == "image":
-					thumb = _https(link.get("href", ""))
-					break
-			items.append({
-				"title": data.get("title", data.get("nasa_id", "")),
-				"image": thumb,
-				# The asset list's URL; resolve() picks a file from it.
-				"watchUrl": "nasa:" + _https(entry.get("href", "")),
-			})
-		rows.append(VideoProvider.row(ROWS[i][0], items))
+		rows.append(VideoProvider.row(ROWS[i][0], _items(results[i].data)))
 	return {"ok": true, "data": {"service": id, "rows": rows}}
+
+
+func _search(query: String) -> Dictionary:
+	var res: Dictionary = await HttpJson.fetch(self, _search_url(query, 1, 48))
+	return {"ok": true, "items": _items(res.data)} if res.ok else res
+
+
+func _pages_rows() -> bool:
+	return true
+
+
+func _more(row_index: int, page: int) -> Dictionary:
+	var res: Dictionary = await HttpJson.fetch(self, _search_url(ROWS[row_index][1], page + 1))
+	# Past the last page the API answers 400; that's simply the end.
+	return {"ok": true, "items": _items(res.data) if res.ok else []}
+
+
+func _items(data: Dictionary) -> Array:
+	var items := []
+	for entry in data.get("collection", {}).get("items", []):
+		var meta: Dictionary = entry.get("data", [{}])[0]
+		var thumb := ""
+		for link in entry.get("links", []):
+			if link.get("render") == "image":
+				thumb = _https(link.get("href", ""))
+				break
+		var item := {
+			"title": meta.get("title", meta.get("nasa_id", "")),
+			"image": thumb,
+			# The asset list's URL; resolve() picks a file from it.
+			"watchUrl": "nasa:" + _https(entry.get("href", "")),
+		}
+		var year := str(meta.get("date_created", "")).left(4)
+		if year.is_valid_int():
+			item["year"] = year.to_int()
+		items.append(item)
+	return items
+
+
+static func _search_url(query: String, page := 1, size := PER_ROW) -> String:
+	return "https://images-api.nasa.gov/search?media_type=video&page_size=%d&page=%d&q=%s" % [size, page, query.uri_encode()]
 
 
 func _resolve(watch_url: String) -> Dictionary:

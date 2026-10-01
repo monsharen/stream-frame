@@ -15,6 +15,13 @@ var _router: PointerRouter
 var _controllers: Array[XRController3D] = []
 var _active: XRController3D
 var _scroll_accumulator := Vector2.ZERO
+## While watching, rays stay hidden until a controller moves or is used.
+var _quiet := false
+var _last_activity := 0.0
+var _last_positions: Dictionary = {}
+const QUIET_SECONDS := 3.0
+## Controller speed (m/s) that counts as reaching for the controls.
+const WAKE_SPEED := 0.25
 
 
 func _init(router: PointerRouter) -> void:
@@ -33,7 +40,28 @@ func _init(router: PointerRouter) -> void:
 	_active = _controllers[1]
 
 
+## Snap-turns you by `angle` (radians, positive = left) about where your
+## head is: instant, the comfortable way to turn in VR.
+func turn(angle: float) -> void:
+	var head := (get_child(0) as Node3D).global_position
+	var pivot := Transform3D(Basis(Vector3.UP, angle), Vector3.ZERO)
+	global_transform = Transform3D.IDENTITY.translated(head) * pivot * Transform3D.IDENTITY.translated(-head) * global_transform
+
+
+func set_quiet(quiet: bool) -> void:
+	_quiet = quiet
+	_last_activity = Time.get_ticks_msec() / 1000.0
+
+
 func _process(delta: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	for controller in _controllers:
+		var position := controller.global_position
+		if _last_positions.has(controller) and delta > 0.0 \
+				and (position - _last_positions[controller]).length() / delta > WAKE_SPEED:
+			_last_activity = now
+		_last_positions[controller] = position
+	var awake := not _quiet or now - _last_activity < QUIET_SECONDS
 	for controller in _controllers:
 		var ray: Node3D = controller.get_child(0)
 		var dot: MeshInstance3D = controller.get_child(1)
@@ -45,9 +73,9 @@ func _process(delta: float) -> void:
 				hit = _router.update(t.origin, -t.basis.z)
 			else:
 				hit = _router.cast(t.origin, -t.basis.z)[1]
-		ray.visible = tracked
+		ray.visible = tracked and awake
 		ray.scale.z = RAY_LENGTH if hit.is_empty() else hit.distance
-		dot.visible = tracked and not hit.is_empty()
+		dot.visible = tracked and awake and not hit.is_empty()
 		if dot.visible:
 			dot.global_position = hit.point
 		if controller == _active and not hit.is_empty():
@@ -55,7 +83,20 @@ func _process(delta: float) -> void:
 
 
 func _on_button(button: String, controller: XRController3D, pressed: bool) -> void:
+	_last_activity = Time.get_ticks_msec() / 1000.0
 	if button != "trigger_click":
+		# Other buttons trigger whatever app action they're bound to (or,
+		# while the Controls page waits for one, get bound).
+		if InputActions.xr_capture.is_valid():
+			if pressed:
+				InputActions.xr_capture.call("xr:" + button)
+			return
+		var action := InputActions.for_xr_button(button)
+		if action != &"":
+			var event := InputEventAction.new()
+			event.action = action
+			event.pressed = pressed
+			Input.parse_input_event(event)
 		return
 	if pressed and controller != _active:
 		# Switch pointers: aim with this controller before clicking.

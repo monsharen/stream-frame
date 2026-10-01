@@ -17,40 +17,75 @@ func _init() -> void:
 
 
 func _fetch_catalog() -> Dictionary:
-	var index := VideoProvider.safe_media_url(str(_config("search_index")).trim_suffix("/"))
+	var index := _index()
 	if index == "":
 		return {"ok": false, "error": "The PeerTube search index must be an https:// address (Extensions → PeerTube)."}
-	var topics: Array = Array(str(_config("topics")).split(",", false)).map(func(t: String) -> String: return t.strip_edges())
-	topics = topics.filter(func(t: String) -> bool: return t != "")
-	if topics.is_empty():
+	_topics = Array(str(_config("topics")).split(",", false)).map(func(t: String) -> String: return t.strip_edges())
+	_topics = _topics.filter(func(t: String) -> bool: return t != "")
+	if _topics.is_empty():
 		return {"ok": false, "error": "No PeerTube topics configured (Extensions → PeerTube)."}
-	var language := str(_config("language")).strip_edges()
-	var urls := topics.map(func(topic: String) -> String:
-		var url := "%s/api/v1/search/videos?search=%s&count=%d&nsfw=false&durationMin=%d" % [index, topic.uri_encode(), PER_ROW, MIN_SECONDS]
-		if language != "":
-			url += "&languageOneOf[]=" + language.uri_encode()
-		return url)
-	var results: Array = await HttpJson.fetch_all(self, urls)
+	var results: Array = await HttpJson.fetch_all(self, _topics.map(func(t: String) -> String: return _search_url(index, t)))
 	var rows := []
-	for i in topics.size():
+	for i in _topics.size():
 		if not results[i].ok:
 			return results[i]
-		var items := []
-		for video in results[i].data.get("data", []):
-			if video.get("nsfw", false):
-				continue
-			# Host and id end up in a URL we request: accept only plain
-			# hostnames and UUIDs, so a bad index entry can't redirect it.
-			var host: String = video.get("account", {}).get("host", "")
-			if not _is_hostname(host) or not _is_uuid(video.get("uuid", "")):
-				continue
-			items.append({
-				"title": video.get("name", ""),
-				"image": VideoProvider.safe_media_url(video.get("thumbnailUrl", "")),
-				"watchUrl": "peertube:%s/%s" % [host, video.get("uuid", "")],
-			})
-		rows.append(VideoProvider.row(topics[i].capitalize(), items))
+		rows.append(VideoProvider.row(_topics[i].capitalize(), _items(results[i].data)))
 	return {"ok": true, "data": {"service": id, "rows": rows}}
+
+
+func _search(query: String) -> Dictionary:
+	if _index() == "":
+		return {"ok": false, "error": "The PeerTube search index must be an https:// address (Extensions → PeerTube)."}
+	var res: Dictionary = await HttpJson.fetch(self, _search_url(_index(), query, 0, 48))
+	return {"ok": true, "items": _items(res.data)} if res.ok else res
+
+
+func _pages_rows() -> bool:
+	return true
+
+
+func _more(row_index: int, page: int) -> Dictionary:
+	var res: Dictionary = await HttpJson.fetch(self, _search_url(_index(), _topics[row_index], page * PER_ROW))
+	return {"ok": true, "items": _items(res.data)} if res.ok else res
+
+
+var _topics: Array = []
+
+
+func _index() -> String:
+	return VideoProvider.safe_media_url(str(_config("search_index")).trim_suffix("/"))
+
+
+func _search_url(index: String, query: String, start := 0, count := PER_ROW) -> String:
+	var url := "%s/api/v1/search/videos?search=%s&start=%d&count=%d&nsfw=false&durationMin=%d" \
+		% [index, query.uri_encode(), start, count, MIN_SECONDS]
+	var language := str(_config("language")).strip_edges()
+	if language != "":
+		url += "&languageOneOf[]=" + language.uri_encode()
+	return url
+
+
+func _items(data: Dictionary) -> Array:
+	var items := []
+	for video in data.get("data", []):
+		if video.get("nsfw", false):
+			continue
+		# Host and id end up in a URL we request: accept only plain
+		# hostnames and UUIDs, so a bad index entry can't redirect it.
+		var host: String = video.get("account", {}).get("host", "")
+		if not _is_hostname(host) or not _is_uuid(video.get("uuid", "")):
+			continue
+		var item := {
+			"title": video.get("name", ""),
+			"image": VideoProvider.safe_media_url(video.get("thumbnailUrl", "")),
+			"watchUrl": "peertube:%s/%s" % [host, video.get("uuid", "")],
+			"duration": float(video.get("duration", 0)),
+		}
+		var year := str(video.get("publishedAt", "")).left(4)
+		if year.is_valid_int():
+			item["year"] = year.to_int()
+		items.append(item)
+	return items
 
 
 func _resolve(watch_url: String) -> Dictionary:

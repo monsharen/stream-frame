@@ -19,6 +19,11 @@ var app: Control
 
 
 func _ready() -> void:
+	# This test covers the external player path (with a fake player); the
+	# built-in one has its own test.
+	var settings := Settings.load_or_default()
+	settings.set_extension_value("device", "builtin_player", false)
+	settings.save()
 	app = load("res://main.tscn").instantiate()
 	add_child(app)
 	# Never launch a real video player from a test.
@@ -147,7 +152,7 @@ func _demo_pass() -> Variant:
 	if not await _until(func() -> bool: return _source_cards("open-movies").size() == _demo_cards()):
 		return "the Open movies catalog did not load"
 	var item: Dictionary = _source_cards("open-movies")[1].item
-	if not item["watchUrl"].begins_with("https://commons.wikimedia.org/"):
+	if not item["watchUrl"].begins_with("https://upload.wikimedia.org/wikipedia/commons/transcoded/"):
 		return "on-device titles should play the real video files: %s" % item["watchUrl"]
 	app.play_item(item)
 	if not await _until(func() -> bool: return app.local.state.get("status") == "playing"):

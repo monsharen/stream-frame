@@ -21,8 +21,14 @@ var height: float
 ## Angle the screen spans, in radians.
 var arc: float
 
-var _material := StandardMaterial3D.new()
+const SCREEN_SHADER := preload("res://shaders/screen.gdshader")
+
+var _material := ShaderMaterial.new()
+var _opacity := 1.0
 var _fade: Tween
+## Where the screen rests; it rises into place from just below when shown.
+var _rest_y := 0.0
+const RISE := 0.06
 var _last_pixel := Vector2(-1, -1)
 var _buttons_down := 0
 
@@ -36,33 +42,86 @@ func _init(source: SubViewport, screen_radius: float, screen_width: float, sourc
 	arc = screen_width / screen_radius
 
 	mesh = _build_mesh()
-	_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-	_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_material.albedo_texture = viewport.get_texture()
+	_material.shader = SCREEN_SHADER
+	# Drawn after the glow and floor reflection behind/below it, so the
+	# screen always covers them.
+	_material.render_priority = 1
+	_material.set_shader_parameter("ui_tex", viewport.get_texture())
+	var size := Vector2(viewport.size)
+	_material.set_shader_parameter("ui_region", Vector4(region.position.x / size.x, region.position.y / size.y,
+		region.size.x / size.x, region.size.y / size.y))
+	_material.set_shader_parameter("screen_aspect", width / height)
 	material_override = _material
 
 
-## Fades to `opacity` (hidden, and not pointable, at 0).
-func fade(opacity: float, seconds := 0.25) -> void:
+## Resizes the screen (same distance, same proportions).
+func set_width(screen_width: float) -> void:
+	width = screen_width
+	height = screen_width * region.size.y / region.size.x
+	arc = screen_width / radius
+	mesh = _build_mesh()
+
+
+## In-app video under the UI. alpha 0 hides it; stereo: 0 = 2D,
+## 1 = side by side, 2 = top-bottom.
+func set_video(texture: Texture2D, alpha: float, stereo := 0, content := Rect2(0, 0, 1, 1)) -> void:
+	_material.set_shader_parameter("content_rect", Vector4(content.position.x, content.position.y, content.size.x, content.size.y))
+	_material.set_shader_parameter("video_tex", texture)
+	_material.set_shader_parameter("video_alpha", alpha if texture else 0.0)
+	_material.set_shader_parameter("stereo_mode", stereo)
+	if texture:
+		_material.set_shader_parameter("video_size", texture.get_size())
+
+
+func _ready() -> void:
+	_rest_y = position.y
+
+
+## Moves where the screen rests (it rises into this place when shown).
+func set_rest_y(y: float) -> void:
+	_rest_y = y
+	if not (_fade and _fade.is_running()):
+		position.y = y
+
+
+## Fades to `opacity` (hidden, and not pointable, at 0). Appearing, it also
+## rises gently into place; disappearing, it sinks.
+func fade(opacity: float, seconds := 0.3) -> void:
 	if _fade:
 		_fade.kill()
+	_fade = create_tween().set_parallel().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	if opacity > 0.0:
+		if not visible:
+			position.y = _rest_y - RISE
 		visible = true
+		_fade.tween_property(self, "position:y", _rest_y, seconds)
 	else:
 		pointer_exit()
-	_fade = create_tween()
-	_fade.tween_property(_material, "albedo_color:a", opacity, seconds)
+		_fade.tween_property(self, "position:y", _rest_y - RISE, seconds)
+	_fade.tween_method(_set_opacity, _opacity, opacity, seconds)
 	if opacity <= 0.0:
-		_fade.tween_callback(hide)
+		_fade.chain().tween_callback(hide)
 
 
 func set_opacity(opacity: float) -> void:
 	if _fade:
 		_fade.kill()
-	_material.albedo_color.a = opacity
+	_set_opacity(opacity)
 	visible = opacity > 0.0
+
+
+## Show only the UI's own pixels, with no panel behind (see the shader).
+func set_floating(on: bool) -> void:
+	_material.set_shader_parameter("floating", on)
+
+
+func opacity() -> float:
+	return _opacity
+
+
+func _set_opacity(opacity: float) -> void:
+	_opacity = opacity
+	_material.set_shader_parameter("opacity", opacity)
 
 
 ## Where a ray hits the screen: {pixel, point, distance}, or {} for a miss.
@@ -105,7 +164,7 @@ func pixel_to_point(pixel: Vector2) -> Vector3:
 # --- PointerRouter target API ---
 
 func pointer_hit(origin: Vector3, direction: Vector3) -> Dictionary:
-	if not is_visible_in_tree() or _material.albedo_color.a < 0.5:
+	if not is_visible_in_tree() or _opacity < 0.5:
 		return {}
 	return intersect(origin, direction)
 
@@ -177,8 +236,6 @@ func _send_wheel(pixel: Vector2, button: MouseButton, factor: float) -> void:
 func _build_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var uv_origin := region.position / Vector2(viewport.size)
-	var uv_size := region.size / Vector2(viewport.size)
 	for i in SEGMENTS + 1:
 		var u := float(i) / SEGMENTS
 		var angle := (u - 0.5) * arc
@@ -187,7 +244,7 @@ func _build_mesh() -> ArrayMesh:
 		var inward := Vector3(-sin(angle), 0, cos(angle))
 		for row in [[0.0, height / 2.0], [1.0, -height / 2.0]]:
 			st.set_normal(inward)
-			st.set_uv(uv_origin + Vector2(u, row[0]) * uv_size)
+			st.set_uv(Vector2(u, row[0]))  # the shader maps this to its UI region
 			st.add_vertex(Vector3(x, row[1], z))
 	for i in SEGMENTS:
 		var top := i * 2
