@@ -1,13 +1,13 @@
 class_name ImageCache
 extends Node
-## Loads poster images into TextureRects, with an in-memory and on-disk cache
-## and a cap on concurrent downloads (a Netflix home page has hundreds).
+## Loads poster images, with an in-memory and on-disk cache and a cap on
+## concurrent downloads (a Netflix home page has hundreds).
 
 const DISK_DIR := "user://posters"
 const MAX_CONCURRENT := 6
 
 var _textures: Dictionary[String, Texture2D] = {}
-## url -> TextureRects waiting for it
+## url -> callbacks waiting for it
 var _waiting: Dictionary[String, Array] = {}
 var _queue: Array[String] = []
 var _active := 0
@@ -18,15 +18,23 @@ func _ready() -> void:
 
 
 func load_into(url: String, target: TextureRect) -> void:
+	load_texture(url, func(texture: Texture2D) -> void:
+		if is_instance_valid(target):
+			target.texture = texture)
+
+
+## Calls `callback(texture)` once the image is available (texture is null if
+## it couldn't be loaded). Callbacks on freed objects are skipped.
+func load_texture(url: String, callback: Callable) -> void:
 	if url == "":
 		return
 	if _textures.has(url):
-		target.texture = _textures[url]
+		callback.call(_textures[url])
 		return
 	if _waiting.has(url):
-		_waiting[url].append(target)
+		_waiting[url].append(callback)
 		return
-	_waiting[url] = [target]
+	_waiting[url] = [callback]
 	var cached := _decode(FileAccess.get_file_as_bytes(_disk_path(url)))
 	if cached:
 		_finish(url, cached)
@@ -65,9 +73,9 @@ func _download(url: String) -> void:
 func _finish(url: String, texture: Texture2D) -> void:
 	if texture:
 		_textures[url] = texture
-	for target in _waiting.get(url, []):
-		if is_instance_valid(target):
-			target.texture = texture
+	for callback: Callable in _waiting.get(url, []):
+		if callback.is_valid():
+			callback.call(texture)
 	_waiting.erase(url)
 
 

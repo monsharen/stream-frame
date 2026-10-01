@@ -3,24 +3,34 @@ extends AgentClient
 ## Stands in for the host agent so the app can be tried with no PC at all:
 ## serves a fixed catalog and simulates playback locally. Same interface as
 ## AgentClient, so the rest of the app can't tell the difference.
+##
+## Timings mimic the real thing (a LAN round trip, the host scraping a
+## streaming site, a DRM'd title starting up, rebuffering after a seek), so
+## the app's loading states get exercised. STREAM_FRAME_DEMO_LATENCY scales
+## them: 0 makes everything instant, 2 doubles it.
 
-const LOAD_SECONDS := 1.5
-
-const _POSTERS := "https://upload.wikimedia.org/wikipedia/commons/thumb/"
-const CATALOG := {
-	"service": "demo",
-	"rows": [{
-		"title": "Blender open movies",
-		"items": [
-			{"id": "sintel", "watchUrl": "offline://sintel", "title": "Sintel", "duration": 888.0,
-				"image": _POSTERS + "8/8f/Sintel_poster.jpg/330px-Sintel_poster.jpg"},
-			{"id": "tears-of-steel", "watchUrl": "offline://tears-of-steel", "title": "Tears of Steel", "duration": 734.0,
-				"image": _POSTERS + "7/70/Tos-poster.png/330px-Tos-poster.png"},
-			{"id": "big-buck-bunny", "watchUrl": "offline://big-buck-bunny", "title": "Big Buck Bunny", "duration": 596.0,
-				"image": _POSTERS + "c/c5/Big_buck_bunny_poster_big.jpg/330px-Big_buck_bunny_poster_big.jpg"},
-		],
-	}],
+## [min, max] seconds for each kind of operation.
+const TIMINGS := {
+	"request": [0.08, 0.25],      # LAN round trip + agent work
+	"catalog": [0.6, 1.2],        # first load: agent reads its cache
+	"refresh": [3.0, 5.0],        # agent scrapes the service's site
+	"start": [3.5, 6.0],          # page load, DRM license, first frames
+	"seek_buffer": [0.6, 1.6],    # rebuffering after a seek
+	"stop": [0.3, 0.6],
 }
+
+const WATCH_PREFIX := "offline://"
+
+var _latency := 1.0
+## Bumped on play/stop so timers from a superseded title don't fire into
+## the current one.
+var _generation := 0
+
+
+func _ready() -> void:
+	var scale := OS.get_environment("STREAM_FRAME_DEMO_LATENCY")
+	if scale.is_valid_float():
+		_latency = maxf(0.0, scale.to_float())
 
 
 func configure(_base_url: String, _token: String) -> void:
@@ -29,17 +39,18 @@ func configure(_base_url: String, _token: String) -> void:
 
 
 func request(method: HTTPClient.Method, path: String, body: Variant = null) -> Dictionary:
-	await get_tree().process_frame  # stay asynchronous, like the real thing
+	await _wait("request")
 	if path == "/api/services":
-		return {"ok": true, "data": [{"id": "demo", "name": "Offline demo"}]}
+		return {"ok": true, "data": [{"id": "demo", "name": "Demo (open movies)"}]}
 	if path.begins_with("/api/catalog/"):
-		return {"ok": true, "data": CATALOG.duplicate(true)}  # callers may annotate it
+		await _wait("refresh" if path.ends_with("?refresh") else "catalog")
+		return {"ok": true, "data": catalog()}
 	if path == "/api/state":
 		return {"ok": true, "data": state}
 	if method == HTTPClient.METHOD_POST and path == "/api/play":
 		return _play(body.get("watchUrl", ""))
 	if method == HTTPClient.METHOD_POST and path == "/api/control":
-		return _control(body.get("action", ""), body.get("value"))
+		return await _control(body.get("action", ""), body.get("value"))
 	return {"ok": false, "error": "Not available offline: " + path}
 
 
@@ -47,31 +58,40 @@ func _play(watch_url: String) -> Dictionary:
 	var item := _find(watch_url)
 	if item.is_empty():
 		return {"ok": false, "error": "Unknown title"}
+	_generation += 1
+	var generation := _generation
 	_set_state({"status": "loading", "service": "demo", "title": item["title"], "watchUrl": watch_url,
 		"position": 0.0, "duration": 0.0, "error": null})
-	get_tree().create_timer(LOAD_SECONDS).timeout.connect(func() -> void:
-		if state.get("watchUrl") == watch_url and state["status"] == "loading":
-			_set_state({"status": "playing", "duration": item["duration"]}))
+	_after("start", generation, func() -> void:
+		_set_state({"status": "playing", "duration": item["duration"]}))
 	return {"ok": true, "data": state}
 
 
 func _control(action: String, value: Variant) -> Dictionary:
 	var status: String = state["status"]
-	if status == "idle":
+	if status in ["idle", "error"]:
 		return {"ok": false, "error": "Nothing is playing"}
 	var duration: float = state["duration"]
 	match action:
 		"toggle":
-			_set_state({"status": "paused" if status == "playing" else "playing"})
+			_set_state({"status": "playing" if status == "paused" else "paused"})
 		"play":
 			_set_state({"status": "playing"})
 		"pause":
 			_set_state({"status": "paused"})
-		"seekBy":
-			_set_state({"position": clampf(state["position"] + float(value), 0.0, duration)})
-		"seekTo":
-			_set_state({"position": clampf(float(value), 0.0, duration)})
+		"seekBy", "seekTo":
+			if not (value is float or value is int):
+				return {"ok": false, "error": "value must be a number of seconds"}
+			var target: float = float(value) + (state["position"] if action == "seekBy" else 0.0)
+			_set_state({"position": clampf(target, 0.0, duration)})
+			if status != "paused":
+				_set_state({"status": "buffering"})
+				_after("seek_buffer", _generation, func() -> void:
+					if state["status"] == "buffering":
+						_set_state({"status": "playing"}))
 		"stop":
+			_generation += 1
+			await _wait("stop")
 			state = {"status": "idle", "position": 0.0, "duration": 0.0}
 			state_changed.emit(state)
 		_:
@@ -92,13 +112,28 @@ func _process(delta: float) -> void:
 			state_changed.emit(state)
 
 
+func _wait(kind: String) -> void:
+	var bounds: Array = TIMINGS[kind]
+	await get_tree().create_timer(randf_range(bounds[0], bounds[1]) * _latency).timeout
+
+
+## Runs `then` after a delay, unless a newer play/stop happened meanwhile.
+func _after(kind: String, generation: int, then: Callable) -> void:
+	await _wait(kind)
+	if generation == _generation:
+		then.call()
+
+
 func _set_state(patch: Dictionary) -> void:
 	state.merge(patch, true)
 	state_changed.emit(state)
 
 
+## The demo PC service's catalog (a fresh copy each time).
+static func catalog() -> Dictionary:
+	return OpenMovies.catalog("demo", WATCH_PREFIX)
+
+
 func _find(watch_url: String) -> Dictionary:
-	for item in CATALOG["rows"][0]["items"]:
-		if item["watchUrl"] == watch_url:
-			return item
-	return {}
+	var id := OpenMovies.id_for(watch_url, WATCH_PREFIX)
+	return OpenMovies.item(id, WATCH_PREFIX) if OpenMovies.FILMS.has(id) else {}

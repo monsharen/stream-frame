@@ -3,7 +3,7 @@ import type { Page } from 'playwright-core';
 import type { ChromeHost } from './chrome.ts';
 import type { ServiceAdapter } from './services/types.ts';
 
-export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error';
+export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'buffering' | 'paused' | 'ended' | 'error';
 
 export type PlaybackState = {
   status: PlaybackStatus;
@@ -15,7 +15,7 @@ export type PlaybackState = {
   error?: string;
 };
 
-type VideoSnapshot = { currentTime: number; duration: number; paused: boolean; ended: boolean };
+type VideoSnapshot = { currentTime: number; duration: number; paused: boolean; ended: boolean; stalled: boolean };
 
 const POLL_MS = 500;
 const START_TIMEOUT_MS = 60_000;
@@ -28,7 +28,14 @@ function readVideo(page: Page): Promise<VideoSnapshot | null> {
   return page.evaluate(() => {
     const v = document.querySelector('video');
     if (!v) return null;
-    return { currentTime: v.currentTime, duration: v.duration || 0, paused: v.paused, ended: v.ended };
+    return {
+      currentTime: v.currentTime,
+      duration: v.duration || 0,
+      paused: v.paused,
+      ended: v.ended,
+      // Seeking, or not enough data to keep playing (HAVE_FUTURE_DATA = 3).
+      stalled: v.seeking || v.readyState < 3,
+    };
   });
 }
 
@@ -169,7 +176,8 @@ export class Player extends EventEmitter<{ state: [PlaybackState] }> {
       return;
     }
     this.#missedPolls = 0;
-    const status: PlaybackStatus = video.ended ? 'ended' : video.paused ? 'paused' : 'playing';
+    const status: PlaybackStatus =
+      video.ended ? 'ended' : video.paused ? 'paused' : video.stalled ? 'buffering' : 'playing';
     this.#set({ status, position: video.currentTime, duration: video.duration });
   }
 

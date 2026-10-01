@@ -11,6 +11,8 @@ signal closed
 ## which means it failed (not paired, host unreachable) rather than the user
 ## closing it.
 signal failed(message: String)
+## Emitted once the stream has been running long enough to be on screen.
+signal opened
 
 ## Exits faster than this count as a failed start.
 const MIN_RUN_SECONDS := 3.0
@@ -18,10 +20,16 @@ const MIN_RUN_SECONDS := 3.0
 var _pid := -1
 var _host := ""
 var _started_at := 0.0
+var _announced := false
 
 
 func is_running() -> bool:
 	return _pid > 0 and OS.is_process_running(_pid)
+
+
+## Launched, but Moonlight is most likely still connecting.
+func is_opening() -> bool:
+	return is_running() and not _announced
 
 
 ## Returns an error message, or "" on success.
@@ -41,6 +49,7 @@ func start(settings: Settings) -> String:
 	_pid = OS.create_process(command[0], args)
 	_host = settings.stream_host()
 	_started_at = Time.get_ticks_msec() / 1000.0
+	_announced = false
 	if _pid <= 0:
 		_pid = -1
 		return "Could not start Moonlight (%s)" % command[0]
@@ -54,6 +63,10 @@ func stop() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _pid > 0 and not _announced and OS.is_process_running(_pid) \
+			and Time.get_ticks_msec() / 1000.0 - _started_at >= MIN_RUN_SECONDS:
+		_announced = true
+		opened.emit()
 	if _pid > 0 and not OS.is_process_running(_pid):
 		_pid = -1
 		if Time.get_ticks_msec() / 1000.0 - _started_at < MIN_RUN_SECONDS:

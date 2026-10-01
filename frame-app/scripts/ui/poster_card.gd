@@ -26,6 +26,13 @@ func _init(catalog_item: Dictionary, images: ImageCache) -> void:
 	art_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layout.add_child(art_frame)
 
+	# Shows until the artwork arrives (or if it never does).
+	var placeholder := ColorRect.new()
+	placeholder.color = UiTheme.BORDER
+	placeholder.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	placeholder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art_frame.add_child(placeholder)
+
 	var art := TextureRect.new()
 	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE

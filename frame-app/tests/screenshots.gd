@@ -12,7 +12,7 @@ func _ready() -> void:
 	await _until(func() -> bool: return app.browse.find_children("*", "PosterCard", true, false).size() > 0)
 	await get_tree().create_timer(3.0).timeout  # posters
 	await _capture(out.path_join("browse.png"))
-	app._play(app.browse.find_children("*", "PosterCard", true, false)[0].item)
+	app.play_item(app.browse.find_children("*", "PosterCard", true, false)[0].item)
 	await _until(func() -> bool: return app.agent.state.get("status") == "playing")
 	await _until(func() -> bool: return app.agent.state.get("status") == "paused")
 	await get_tree().create_timer(1.0).timeout

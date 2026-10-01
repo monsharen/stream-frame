@@ -11,7 +11,8 @@ var app: Control
 func _ready() -> void:
 	app = load("res://main.tscn").instantiate()
 	add_child(app)
-	var failure: String = await _run()
+	var failure: Variant = await _run()
+	failure = _as_failure(failure)
 	if failure == "":
 		print("SELFTEST PASS")
 		get_tree().quit(0)
@@ -20,7 +21,28 @@ func _ready() -> void:
 		get_tree().quit(1)
 
 
-func _run() -> String:
+func _run() -> Variant:
+	# The real agent offers Netflix and Demo; Netflix is available too, but
+	# only the Demo plays without an account.
+	if not await _until(func() -> bool: return ExtensionRegistry.by_id(app.sources, "demo").get("available", false)):
+		return "the agent's Demo source never became available on the home"
+	if not ExtensionRegistry.by_id(app.sources, "netflix").get("available", false):
+		return "Netflix should be available when the agent offers it"
+	if ExtensionRegistry.by_id(app.extensions, "disney").get("status") != "Coming soon":
+		return "services the agent lacks should say Coming soon"
+	print("ok: home reflects the agent's services (Netflix, Demo available; Disney+ coming soon)")
+
+	# Netflix isn't logged in on this test browser: its catalog fails, and
+	# "What's wrong?" explains it on Netflix's info page.
+	app.open_source(ExtensionRegistry.by_id(app.sources, "netflix"))
+	if not await _until(func() -> bool: return app.browse._help.visible):
+		return "a failed Netflix catalog should offer \"What's wrong?\""
+	app.browse._help.pressed.emit()
+	if app.current_view != "info" or not app.info_view.error.contains("Not logged in"):
+		return "\"What's wrong?\" should show Netflix's info page with the error: %s" % app.info_view.error
+	print("ok: Netflix not logged in -> What's wrong? -> '%s'" % app.info_view.error)
+	app.show_home()
+	app.open_source(ExtensionRegistry.by_id(app.sources, "demo"))
 	if not await _until(func() -> bool: return _cards().size() > 0):
 		return "catalog never showed any cards"
 	var card: PosterCard = _cards()[0]
@@ -68,3 +90,9 @@ func _until(condition: Callable) -> bool:
 			return true
 		await get_tree().create_timer(0.1).timeout
 	return false
+
+
+## A script error aborts the test coroutine, which then returns null: that
+## must count as a failure, not as "no failure message".
+static func _as_failure(result: Variant) -> String:
+	return result if result is String else "the test hit a script error (see the log above)"
