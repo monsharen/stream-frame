@@ -1,0 +1,80 @@
+# Builds the installable Flatpak bundle for the Steam Frame (ARM64) and for
+# desktop Linux (x86_64): the Godot export, the mpv GDExtension and the whole
+# media stack in one .flatpak file. Install it on the device with
+# `flatpak install --user ./stream-frame-arm64.flatpak`; installing a newer
+# bundle upgrades in place.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+permissions:
+  contents: write
+
+jobs:
+  flatpak:
+    name: Flatpak (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            preset: Linux ARM64
+          - arch: x86_64
+            runner: ubuntu-24.04
+            preset: Linux x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ pkg-config libmpv-dev unzip flatpak flatpak-builder
+
+      - name: Build the mpv GDExtension
+        run: TARGET=template_release JOBS=$(nproc) frame-app/native/build.sh
+
+      - name: Install Godot and export templates
+        run: |
+          curl -fsSLO "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.${{ matrix.arch }}.zip"
+          unzip -q "Godot_v${GODOT_VERSION}-stable_linux.${{ matrix.arch }}.zip"
+          sudo install -m755 "Godot_v${GODOT_VERSION}-stable_linux.${{ matrix.arch }}" /usr/local/bin/godot
+          curl -fsSLO "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          unzip -q -j "Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+            "templates/linux_release.${{ matrix.arch }}" "templates/linux_debug.${{ matrix.arch }}" \
+            -d "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+
+      - name: Export the app
+        run: |
+          godot --headless --path frame-app --import || true
+          mkdir -p dist/export
+          godot --headless --path frame-app --export-release "${{ matrix.preset }}" ../dist/export/stream-frame
+          ls -l dist/export
+
+      - name: Build the Flatpak bundle
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --install-deps-from=flathub --force-clean --disable-rofiles-fuse \
+            --repo=flatpak-repo build-dir packaging/flatpak/io.github.monsharen.stream_frame.yml
+          flatpak build-bundle flatpak-repo "stream-frame-${{ matrix.arch }}.flatpak" io.github.monsharen.stream_frame
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stream-frame-${{ matrix.arch }}
+          path: stream-frame-${{ matrix.arch }}.flatpak
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: stream-frame-${{ matrix.arch }}.flatpak

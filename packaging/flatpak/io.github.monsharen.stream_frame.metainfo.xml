@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.monsharen.stream_frame</id>
+  <name>Stream Frame</name>
+  <summary>Streaming services on the Steam Frame</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>
+      Browse and watch video sources on the Steam Frame: public, DRM-free
+      sources play on the headset itself; DRM-protected services play in a
+      logged-in Chrome on your PC and are streamed in with Sunshine/Moonlight.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.monsharen.stream_frame.desktop</launchable>
+  <url type="homepage">https://github.com/monsharen/stream-frame</url>
+  <content_rating type="oars-1.1"/>
+</component>

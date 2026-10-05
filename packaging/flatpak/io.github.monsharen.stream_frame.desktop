@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Stream Frame
+Comment=Watch streaming services on the Steam Frame
+Exec=stream-frame
+Icon=io.github.monsharen.stream_frame
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;

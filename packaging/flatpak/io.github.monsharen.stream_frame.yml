@@ -1,0 +1,116 @@
+# Flatpak for the Steam Frame (and any Linux box): the exported Godot app,
+# the mpv GDExtension, libmpv and its codecs, and yt-dlp, all in one bundle.
+# The Godot export and the GDExtension are built first by CI into dist/export
+# (see .github/workflows/build.yml); this manifest packages them and builds
+# the media stack from source so nothing is needed on the device.
+app-id: io.github.monsharen.stream_frame
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: stream-frame
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  # GPU, controllers and the headset's sensors
+  - --device=all
+  # PC titles open Moonlight on the host, outside the sandbox
+  - --talk-name=org.freedesktop.Flatpak
+  # OpenXR: the active-runtime config and Monado's IPC socket
+  - --filesystem=xdg-config/openxr:ro
+  - --filesystem=xdg-run/monado_comp_ipc
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - '*.la'
+  - '*.a'
+
+modules:
+  - name: ffmpeg
+    buildsystem: autotools
+    config-opts:
+      - --disable-debug
+      - --disable-doc
+      - --disable-static
+      - --enable-shared
+      - --disable-programs
+      - --enable-openssl
+    sources:
+      - type: git
+        url: https://github.com/FFmpeg/FFmpeg.git
+        tag: n7.1
+
+  - name: libass
+    config-opts:
+      - --disable-static
+    sources:
+      - type: git
+        url: https://github.com/libass/libass.git
+        tag: 0.17.3
+
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Ddemos=false
+      - -Dvulkan=disabled
+      - -Dopengl=enabled
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/libplacebo.git
+        tag: v7.349.0
+
+  - name: mpv
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=true
+      - -Dcplayer=true
+      - -Dlua=disabled
+      - -Dvulkan=disabled
+      - -Dmanpage-build=disabled
+    sources:
+      - type: git
+        url: https://github.com/mpv-player/mpv.git
+        tag: v0.40.0
+
+  # YouTube runs through yt-dlp. YouTube changes often, so this tracks the
+  # latest release branch; each app release rebuilds it fresh.
+  - name: yt-dlp
+    buildsystem: simple
+    build-commands:
+      - make yt-dlp
+      - install -Dm755 yt-dlp /app/bin/yt-dlp
+    sources:
+      - type: git
+        url: https://github.com/yt-dlp/yt-dlp.git
+        branch: master
+
+  - name: stream-frame
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/stream-frame
+      - cp -a export/. /app/stream-frame/
+      - chmod +x /app/stream-frame/stream-frame
+      - install -Dm755 stream-frame.sh /app/bin/stream-frame
+      - install -Dm755 moonlight.sh /app/bin/moonlight
+      - install -Dm644 io.github.monsharen.stream_frame.desktop /app/share/applications/io.github.monsharen.stream_frame.desktop
+      - install -Dm644 io.github.monsharen.stream_frame.metainfo.xml /app/share/metainfo/io.github.monsharen.stream_frame.metainfo.xml
+      - install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/io.github.monsharen.stream_frame.png
+    sources:
+      - type: dir
+        path: ../../dist/export
+        dest: export
+      - type: file
+        path: stream-frame.sh
+      - type: file
+        path: moonlight.sh
+      - type: file
+        path: io.github.monsharen.stream_frame.desktop
+      - type: file
+        path: io.github.monsharen.stream_frame.metainfo.xml
+      - type: file
+        path: ../../frame-app/assets/brand/icon.png
