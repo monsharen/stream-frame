@@ -56,6 +56,9 @@ modules:
   - name: libplacebo
     buildsystem: meson
     config-opts:
+      # meson defaults to lib64 on x86_64, which mpv's pkg-config lookup
+      # and the runtime linker never see
+      - --libdir=lib
       - -Ddemos=false
       - -Dvulkan=disabled
       - -Dopengl=enabled
@@ -67,6 +70,7 @@ modules:
   - name: mpv
     buildsystem: meson
     config-opts:
+      - --libdir=lib
       - -Dlibmpv=true
       - -Dcplayer=true
       - -Dlua=disabled
